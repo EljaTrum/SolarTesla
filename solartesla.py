@@ -18,6 +18,8 @@ import hashlib
 # TTD: How to prevent the app from stop charging when at another location?
 # Save the cars location by 3 decimal points -> around 12 meters accurate.
 
+# TTD: When updating your Tesla; the SolarTesla app crashes
+
 # Uses: https://github.com/tdorssers/TeslaPy
 import teslapy
 
@@ -69,14 +71,27 @@ def SaveSettings():
     with open(sFileName, 'w') as json_file:
         json.dump(jSettings, json_file)
 
-# To be completed: Search for HomeWizard IP address automaticly
+# Search for HomeWizard IP address automaticly (assumed on 192.168.1.x)
 def CheckHomeWizard():
-    for ip in range(0, 255):
-        resp = requests.get(f"http://192.168.1.%d" % ip)
-        if resp.status_code == 200:
-            # 200 terug; controleer of het de HomeWizard is
-            # ip adres opslaan in settings
-            break
+    global HomeWizardIp
+    for ip in range(2, 255): # range(2, 255)
+        lblSimulateStatus = Label(root, text="Searching HomeWizard: 192.168.1."+str(ip)+"        ")
+        lblSimulateStatus.grid(row=9, column=1, sticky='w')
+        try:
+            resp = requests.get(f"http://192.168.1.%d/api/v1/data" % ip, verify=False, timeout=1)
+
+            if resp.status_code == 200:
+                # 200 terug; controleer of het de HomeWizard is
+                if str(abs(resp.json()['active_power_w'])).isnumeric():
+                    lblSimulateStatus = Label(root, text="Found HomeWizard: 192.168.1."+str(ip)+"        ")
+                    lblSimulateStatus.grid(row=9, column=1, sticky='w')                    
+                    #print("HomeWizard found at 192.168.1."+str(ip))
+                    HomeWizardIp = '192.168.1.'+str(ip)
+                    jSettings['HomeWizardIp'] = HomeWizardIp
+                    SaveSettings()
+                    break
+        except:
+            pass
             
 
 
@@ -103,38 +118,43 @@ with teslapy.Tesla(UserEmail, authenticator=custom_auth) as tesla:
 
 def CheckStatus():
     if bActive:
-        response = requests.get("http://"+HomeWizardIp+"/api/v1/data")      
-            
-        current = str(response.json()['active_power_w'])
-        global iCurrent
-        icurrent = current
-        # rood of groen tonen van wattage
-        if int(icurrent) > 0:
-            sColor = "indianred"
-        else:
-            sColor = "forestgreen"
+        try:
+            response = requests.get("http://"+HomeWizardIp+"/api/v1/data", verify=False, timeout=4)      
+            current = str(response.json()['active_power_w'])
+            global iCurrent
+            icurrent = current
+            # rood of groen tonen van wattage
+            if int(icurrent) > 0:
+                sColor = "indianred"
+            else:
+                sColor = "forestgreen"
         
-        # Minimaal beschikbare stroom in de laatste 60 seconden bijhouden
-        global mincurrent
-        if int(icurrent) > 0:
-            mincurrent = 0
-        elif int(icurrent) > int(mincurrent):
-            mincurrent = icurrent
-        else:
-            mincurrent = int(mincurrent) - 10
+            # Minimaal beschikbare stroom in de laatste 60 seconden bijhouden
+            global mincurrent
+            if int(icurrent) > 0:
+                mincurrent = 0
+            elif int(icurrent) > int(mincurrent):
+                mincurrent = icurrent
+            else:
+                mincurrent = int(mincurrent) - 10
         
 
-        # Format number with dots for thousands
-        current = "{:,}".format(int(current)).replace(',','.')
+            # Format number with dots for thousands
+            current = "{:,}".format(int(current)).replace(',','.')
     
-        # Update label
-        myLabel2 = Label(root, text=current+" w (MIN: "+str(mincurrent)+")      ", fg=sColor)
-        myLabel2.grid(row=1, column=1, sticky='w')
+            # Update label
+            myLabel2 = Label(root, text=current+" w (MIN: "+str(mincurrent)+")      ", fg=sColor)
+            myLabel2.grid(row=1, column=1, sticky='w')
      
-        UpdateCharging(mincurrent)
+            UpdateCharging(mincurrent)
         
-        # Keep refreshing every second
-        root.after(1000, CheckStatus)
+            # Keep refreshing every second
+            root.after(1000, CheckStatus)
+
+        except:    
+            # HomeWizard P1 meter not found; search
+            CheckHomeWizard()
+            
     else:
         myLabel2 = Label(root, text="Sleeping         ", fg="black")
         myLabel2.grid(row=1, column=1, sticky='w')
@@ -155,30 +175,34 @@ def TeslaInfo():
     
     if bActive:
 
+        try:    
+            with teslapy.Tesla(UserEmail) as tesla:
+                vehicles = tesla.vehicle_list()
+                vehicles[0].sync_wake_up()
+        
+                TeslaName = vehicles[0].get_vehicle_data()['display_name']
+                TeslaBattery = vehicles[0].get_vehicle_data()['charge_state']['battery_level']
+                TeslaCharging = vehicles[0].get_vehicle_data()['charge_state']['charging_state']
+                TeslaChargingSpeed = vehicles[0].get_vehicle_data()['charge_state']['charge_current_request']
+                TeslaChargingRate = vehicles[0].get_vehicle_data()['charge_state']['charge_rate']
             
-        with teslapy.Tesla(UserEmail) as tesla:
-            vehicles = tesla.vehicle_list()
-            vehicles[0].sync_wake_up()
-        
-            TeslaName = vehicles[0].get_vehicle_data()['display_name']
-            TeslaBattery = vehicles[0].get_vehicle_data()['charge_state']['battery_level']
-            TeslaCharging = vehicles[0].get_vehicle_data()['charge_state']['charging_state']
-            TeslaChargingSpeed = vehicles[0].get_vehicle_data()['charge_state']['charge_current_request']
-            TeslaChargingRate = vehicles[0].get_vehicle_data()['charge_state']['charge_rate']
-        
-        
-            TeslaPort = vehicles[0].get_vehicle_data()['drive_state']['latitude']
-            TeslaPort = str(TeslaPort) + ", "
-            TeslaPort = TeslaPort + str(vehicles[0].get_vehicle_data()['drive_state']['longitude'])
-    
-        myLabel4 = Label(root, text=TeslaName)
-        myLabel4.grid(row=3, column=1, sticky='w')
+                TeslaPort = vehicles[0].get_vehicle_data()['drive_state']['latitude']
+                TeslaPort = str(TeslaPort) + ", "
+                TeslaPort = TeslaPort + str(vehicles[0].get_vehicle_data()['drive_state']['longitude'])
+                
+            myLabel4 = Label(root, text=TeslaName)
+            myLabel4.grid(row=3, column=1, sticky='w')
 
-        myLabel6 = Label(root, text=str(TeslaBattery)+" %")
-        myLabel6.grid(row=4, column=1, sticky='w')
+            myLabel6 = Label(root, text=str(TeslaBattery)+" %")
+            myLabel6.grid(row=4, column=1, sticky='w')
 
-        myLabel6 = Label(root, text=TeslaCharging)
-        myLabel6.grid(row=5, column=1, sticky='w')
+            myLabel6 = Label(root, text=TeslaCharging)
+            myLabel6.grid(row=5, column=1, sticky='w')                
+                
+        except:
+            lblWebconnectStatus = Label(root, text="Could not connect to your Tesla.         ")
+            lblWebconnectStatus.grid(row=10, column=1, sticky='w')
+
 
         if TeslaCharging != 'Disconnected':
             myLabel10 = Label(root, text=TeslaPort)
@@ -261,19 +285,33 @@ def ConnectSolarTesla():
     if sStatus == 'sleep':
         TeslaCharging = 'sleep'
 
+    if sValue is None:
+        sValue == 0
+
+    if TeslaBattery is None:
+        TeslaBattery == 0
+        
+    if TeslaCharging is None:
+        TeslaCharging == 'error'
+        
+
     url = 'https://solartesla.nl/api/connect.asp?u='+hex_dig+'&s='+TeslaCharging+'&e='+UserEmail+'&v='+str(sValue)+'&soc='+str(TeslaBattery)
-    reply = requests.get(url)
-    lblWebconnectStatus = Label(root, text=reply.text+", s="+TeslaCharging+", v="+str(sValue)+", soc="+str(TeslaBattery)+"       ")
-    lblWebconnectStatus.grid(row=10, column=1, sticky='w')
+    try: 
+        reply = requests.get(url)
+        lblWebconnectStatus = Label(root, text=reply.text+", s="+TeslaCharging+", v="+str(sValue)+", soc="+str(TeslaBattery)+"       ")
+        lblWebconnectStatus.grid(row=10, column=1, sticky='w')
     
-    #Verwerk de reply
-    if reply.text == 'sleep':
-        #Zet de app in slaapmodus;
-        bActive = False
-        sStatus = 'sleep'
-    elif reply.text == 'awake':
-        bActive = True
-        sStatus = 'disconnected'        
+        #Verwerk de reply
+        if reply.text == 'sleep':
+            #Zet de app in slaapmodus;
+            bActive = False
+            sStatus = 'sleep'
+        elif reply.text == 'awake':
+            bActive = True
+            sStatus = 'disconnected'        
+    except:
+        lblWebconnectStatus = Label(root, text="Unable to connect to SolarTesla server.")
+        lblWebconnectStatus.grid(row=10, column=1, sticky='w')
         
     # Get info again after 1 minute (in milliseconds - 60000)
     root.after(60000, ConnectSolarTesla)
@@ -433,5 +471,3 @@ ConnectSolarTesla()
 
 
 root.mainloop()
-
-
